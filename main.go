@@ -1,12 +1,18 @@
 package main
 
 import (
+	"context"
+	"database/sql"
+	"log"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
+
 	"github.com/caioandre182/api-users/api"
-	"github.com/caioandre182/api-users/domain"
+	"github.com/caioandre182/api-users/store/postgres"
 )
 
 func main() {
@@ -19,22 +25,33 @@ func main() {
 }
 
 func run() error {
-	db := make(map[string]domain.User)
-	handler := api.NewRouter(db)
+	db := openDB()
+	defer db.Close()
 
-	s := http.Server{
-		ReadTimeout:  10 * time.Second,
-		IdleTimeout:  time.Minute,
-		WriteTimeout: 10 * time.Second,
-		Addr:         ":8080",
-		Handler:      handler,
+	pgStore := postgres.New(db)
+	h := api.New(pgStore)
+
+	return http.ListenAndServe(":8080", h.Router())
+}
+
+func openDB() *sql.DB {
+	dsn := os.Getenv("DATABASE_URL")
+
+	if dsn == "" {
+		log.Fatal("missing DATABASE_URL")
 	}
 
-	db["1"] = domain.User{ID: "1", FirstName: "Caio", LastName: "Macedo", Biography: "teste"}
-
-	if err := s.ListenAndServe(); err != nil {
-		return err
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	return nil
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		log.Fatal(err)
+	}
+
+	return db
 }
